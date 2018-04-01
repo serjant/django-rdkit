@@ -11,7 +11,7 @@ from rdkit.DataStructs import ExplicitBitVect, IntSparseIntVect
 
 
 __all__ = ["MolField", "RxnField", "BfpField", "SfpField",]
- 
+
 
 ##########################################
 # Molecule Field
@@ -22,7 +22,7 @@ class MolField(Field):
 
     def db_type(self, connection):
         return 'mol'
-    
+
     def get_placeholder(self, value, compiler, connection):
         if hasattr(value, 'as_sql'):
             # No value used for expressions, substitute in
@@ -52,13 +52,14 @@ class MolField(Field):
             raise ValidationError("Invalid input for a Mol instance")
 
     def get_prep_value(self, value):
-        # convert the Molecule instance to the value used by the 
+        # convert the Molecule instance to the value used by the
         # db driver
         if isinstance(value, six.string_types):
             # The string case. A SMILES is assumed.
             value = Chem.MolFromSmiles(str(value))
         if isinstance(value, Chem.Mol):
             value = six.memoryview(value.ToBinary())
+
         return value
 
     def get_prep_lookup(self, lookup_type, value):
@@ -81,7 +82,7 @@ class RxnField(Field):
 
     def db_type(self, connection):
         return 'reaction'
-    
+
     def from_db_value(self, value, expression, connection, context):
         if value is None:
             return value
@@ -121,7 +122,7 @@ class BfpField(Field):
 
     def db_type(self, connection):
         return 'bfp'
-    
+
     def get_placeholder(self, value, compiler, connection):
         if hasattr(value, 'as_sql'):
             # No value used for expressions, substitute in
@@ -148,7 +149,7 @@ class BfpField(Field):
             raise ValidationError("Invalid input for a Bfp instance")
 
     def get_prep_value(self, value):
-        # convert the ExplicitBitVect instance to the value used by the 
+        # convert the ExplicitBitVect instance to the value used by the
         # db driver
         if isinstance(value, ExplicitBitVect):
             value = six.memoryview(DataStructs.BitVectToBinaryText(value))
@@ -156,7 +157,7 @@ class BfpField(Field):
 
     def get_prep_lookup(self, lookup_type, value):
         if lookup_type in [
-                'lt', 'lte', 'exact', 'isnull', 'gte', 'gt', 'ne', 
+                'lt', 'lte', 'exact', 'isnull', 'gte', 'gt', 'ne',
                 'tanimoto', 'dice']:
             return value
         raise TypeError("Field has invalid lookup: %s" % lookup_type)
@@ -171,10 +172,10 @@ class SfpField(Field):
 
     def db_type(self, connection):
         return 'sfp'
-    
+
     def get_prep_lookup(self, lookup_type, value):
         if lookup_type in [
-                'lt', 'lte', 'exact', 'isnull', 'gte', 'gt', 'ne', 
+                'lt', 'lte', 'exact', 'isnull', 'gte', 'gt', 'ne',
                 'tanimoto', 'dice']:
             return value
         raise TypeError("Field has invalid lookup: %s" % lookup_type)
@@ -183,9 +184,9 @@ class SfpField(Field):
 ###################################################################
 # MolField/RxnField lookup operations, substruct and exact searches
 
-class HasSubstruct(Lookup):
+class HasRxnSubstruct(Lookup):
 
-    lookup_name = 'hassubstruct'
+    lookup_name = 'hasrxnsubstruct'
 
     def as_sql(self, qn, connection):
         lhs, lhs_params = self.process_lhs(qn, connection)
@@ -194,8 +195,24 @@ class HasSubstruct(Lookup):
         return '%s @> %s' % (lhs, rhs), params
 
 
-MolField.register_lookup(HasSubstruct)
-RxnField.register_lookup(HasSubstruct)
+RxnField.register_lookup(HasRxnSubstruct)
+
+class HasMolSubstruct(Lookup):
+
+    lookup_name = 'hasmolsubstruct'
+
+    def as_sql(self, qn, connection):
+        lhs, lhs_params = self.process_lhs(qn, connection)
+        rhs, rhs_params = self.process_rhs(qn, connection)
+        params = []
+        for value in lhs_params + rhs_params:
+            mol = Chem.Mol(bytes(value))
+            smiles = Chem.MolToSmiles(mol)
+            params.append(smiles)
+        return '%s @> %s' % (lhs, rhs), params
+
+
+MolField.register_lookup(HasMolSubstruct)
 
 
 class HasSubstructFP(Lookup):
@@ -212,9 +229,9 @@ class HasSubstructFP(Lookup):
 RxnField.register_lookup(HasSubstructFP)
 
 
-class IsSubstruct(Lookup):
+class IsRxnSubstruct(Lookup):
 
-    lookup_name = 'issubstruct'
+    lookup_name = 'isrxnsubstruct'
 
     def as_sql(self, qn, connection):
         lhs, lhs_params = self.process_lhs(qn, connection)
@@ -222,8 +239,23 @@ class IsSubstruct(Lookup):
         params = lhs_params + rhs_params
         return '%s <@ %s' % (lhs, rhs), params
 
-MolField.register_lookup(IsSubstruct)
-RxnField.register_lookup(IsSubstruct)
+RxnField.register_lookup(IsRxnSubstruct)
+
+class IsMolSubstruct(Lookup):
+
+    lookup_name = 'ismolsubstruct'
+
+    def as_sql(self, qn, connection):
+        lhs, lhs_params = self.process_lhs(qn, connection)
+        rhs, rhs_params = self.process_rhs(qn, connection)
+        params = []
+        for value in lhs_params + rhs_params:
+            mol = Chem.Mol(bytes(value))
+            smiles = Chem.MolToSmiles(mol)
+            params.append(smiles)
+        return '%s <@ %s' % (lhs, rhs), params
+
+MolField.register_lookup(IsMolSubstruct)
 
 
 class IsSubstructFP(Lookup):
@@ -246,8 +278,12 @@ class SameStructure(Lookup):
     def as_sql(self, qn, connection):
         lhs, lhs_params = self.process_lhs(qn, connection)
         rhs, rhs_params = self.process_rhs(qn, connection)
-        params = lhs_params + rhs_params
-        #return '%s @= %s' % (lhs, rhs), params
+        params = []
+        for value in lhs_params + rhs_params:
+            mol = Chem.Mol(bytes(value))
+            smiles = Chem.MolToSmiles(mol)
+            params.append(smiles)
+
         return '%s <@ %s AND %s @> %s' % (lhs, rhs, lhs, rhs), params + params
 
 MolField.register_lookup(SameStructure)
@@ -257,10 +293,10 @@ MolField.register_lookup(SameStructure)
 
 def make_descriptor_mixin(name, prefix, field):
     return type(
-        str('{0}_Mixin'.format(name.upper())), 
+        str('{0}_Mixin'.format(name.upper())),
         (object,),
-        { 
-            'descriptor_name': name, 
+        {
+            'descriptor_name': name,
             'function': '{0}_{1}'.format(prefix, name),
             'default_output_field': field,
         },
@@ -272,7 +308,7 @@ class DescriptorTransform(Transform):
     def as_sql(self, qn, connection):
         lhs, params = qn.compile(self.lhs)
         return "%s(%s)" % (self.function, lhs), params
-    
+
 
 ##########################################
 # MolField transforms and descriptors
@@ -316,8 +352,8 @@ MOL_DESCRIPTORS = [
 
 
 MOL_DESCRIPTOR_MIXINS = [
-    make_descriptor_mixin(d, 'mol', fieldkls()) 
-    for d, fieldkls in MOL_DESCRIPTORS 
+    make_descriptor_mixin(d, 'mol', fieldkls())
+    for d, fieldkls in MOL_DESCRIPTORS
 ]
 
 
@@ -346,8 +382,8 @@ RXN_DESCRIPTORS = [
 
 
 RXN_DESCRIPTOR_MIXINS = [
-    make_descriptor_mixin(d, 'reaction', fieldkls()) 
-    for d, fieldkls in RXN_DESCRIPTORS 
+    make_descriptor_mixin(d, 'reaction', fieldkls())
+    for d, fieldkls in RXN_DESCRIPTORS
 ]
 
 
